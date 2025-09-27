@@ -1702,6 +1702,127 @@ def create_optimization_interface(df):
         )
 
 # =============================================================================
+# FONCTIONS POUR LES INFOBULLES ET DICTIONNAIRE DE MÉTRIQUES
+# =============================================================================
+
+def create_tooltip(help_text):
+    """Crée une infobulle avec le texte d'aide"""
+    st.markdown(f'<span title="{help_text}" style="border-bottom: 1px dotted #0077cc; cursor: help;">ℹ️</span>', unsafe_allow_html=True)
+
+def show_metric_info(metric_name):
+    """Affiche les informations détaillées sur une métrique spécifique"""
+    metrics_info = {
+        "Pearson": {
+            "description": "Mesure la corrélation linéaire entre deux variables continues.",
+            "formula": "r = Σ[(xᵢ - x̄)(yᵢ - ȳ)] / √[Σ(xᵢ - x̄)² Σ(yᵢ - ȳ)²]",
+            "interpretation": "Valeurs entre -1 et 1. 1: corrélation positive parfaite, -1: corrélation négative parfaite, 0: absence de corrélation linéaire.",
+            "usage": "Idéal pour détecter les relations linéaires entre variables normalement distribuées."
+        },
+        "Brice": {
+            "description": "Corrélation basée sur les variations premières (dérivées discrètes) des séries temporelles.",
+            "formula": "Brice = Σ(Δxᵢ * Δyᵢ) / √[Σ(Δxᵢ)² * Σ(Δyᵢ)²] où Δxᵢ = xᵢ - xᵢ₋₁",
+            "interpretation": "Mesure la similarité dans les tendances à court terme. Valeurs élevées indiquent que les variables évoluent dans la même direction.",
+            "usage": "Utile pour l'analyse de séries temporelles et la détection de co-mouvements."
+        },
+        "Brice1": {
+            "description": "Version centrée de la corrélation Brice, utilisant les variations centrées.",
+            "formula": "Brice1 = Σ[(Δxᵢ - μ_Δx)(Δyᵢ - μ_Δy)] / √[Σ(Δxᵢ - μ_Δx)² * Σ(Δyᵢ - μ_Δy)²]",
+            "interpretation": "Similaire à Brice mais moins sensible aux tendances globales, se concentrant sur les variations relatives.",
+            "usage": "Recommandé lorsque les séries présentent des tendances non stationnaires."
+        },
+        "Silhouette": {
+            "description": "Mesure la qualité de la séparation entre les clusters.",
+            "formula": "s(i) = (b(i) - a(i)) / max{a(i), b(i)} où a(i) est la distance moyenne intra-cluster, b(i) la distance moyenne au cluster le plus proche",
+            "interpretation": "Valeurs entre -1 et 1. Valeurs proches de 1: clusters bien séparés, proches de 0: clusters se chevauchent, négatives: points mal classés.",
+            "usage": "Critère de validation pour le clustering, indépendant du nombre de clusters."
+        },
+        "Calinski-Harabasz": {
+            "description": "Ratio entre la dispersion inter-cluster et intra-cluster.",
+            "formula": "CH = [B/(k-1)] / [W/(n-k)] où B est la somme des carrés inter-clusters, W la somme des carrés intra-clusters",
+            "interpretation": "Valeurs plus élevées indiquent une meilleure séparation entre clusters. Pas de borne supérieure fixe.",
+            "usage": "Utile pour comparer différentes configurations de clustering sur le même dataset."
+        },
+        "Davies-Bouldin": {
+            "description": "Mesure la similarité moyenne entre chaque cluster et son cluster le plus similaire.",
+            "formula": "DB = (1/k) Σ max{(sᵢ + sⱼ)/d(cᵢ, cⱼ)} pour i ≠ j, où sᵢ est la dispersion moyenne du cluster i",
+            "interpretation": "Valeurs plus faibles indiquent une meilleure séparation. Minimum théorique de 0.",
+            "usage": "Bon pour les clusters de formes et densités variées."
+        },
+        "ARI": {
+            "description": "Adjusted Rand Index - Mesure la similarité entre deux partitions, corrigée du hasard.",
+            "formula": "ARI = (Index - Expected_Index) / (Max_Index - Expected_Index)",
+            "interpretation": "Valeurs entre -1 et 1. 1: accord parfait, 0: accord aléatoire, négatif: accord pire que le hasard.",
+            "usage": "Validation externe du clustering lorsque la vérité terrain est disponible."
+        },
+        "NMI": {
+            "description": "Normalized Mutual Information - Mesure l'information mutuelle normalisée entre deux partitions.",
+            "formula": "NMI = I(X;Y) / √[H(X)H(Y)] où I est l'information mutuelle, H l'entropie",
+            "interpretation": "Valeurs entre 0 et 1. 1: accord parfait, 0: indépendance statistique.",
+            "usage": "Comparaison de partitions avec différents nombres de clusters."
+        }
+    }
+    
+    if metric_name in metrics_info:
+        info = metrics_info[metric_name]
+        st.markdown(f"### {metric_name}")
+        st.markdown(f"**Description:** {info['description']}")
+        st.markdown(f"**Formule:** `{info['formula']}`")
+        st.markdown(f"**Interprétation:** {info['interpretation']}")
+        st.markdown(f"**Usage recommandé:** {info['usage']}")
+    else:
+        st.warning(f"Métrique '{metric_name}' non trouvée dans le dictionnaire.")
+
+def create_metrics_dictionary():
+    """Crée le dictionnaire complet des métriques disponibles"""
+    st.header("📚 Dictionnaire des Métriques")
+    
+    # Métriques de corrélation
+    with st.expander("📈 Métriques de Corrélation", expanded=True):
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("Pearson", use_container_width=True):
+                show_metric_info("Pearson")
+        with col2:
+            if st.button("Brice", use_container_width=True):
+                show_metric_info("Brice")
+        with col3:
+            if st.button("Brice1", use_container_width=True):
+                show_metric_info("Brice1")
+    
+    # Métriques de clustering
+    with st.expander("🔍 Métriques de Clustering", expanded=True):
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if st.button("Silhouette", use_container_width=True):
+                show_metric_info("Silhouette")
+        with col2:
+            if st.button("Calinski-Harabasz", use_container_width=True):
+                show_metric_info("Calinski-Harabasz")
+        with col3:
+            if st.button("Davies-Bouldin", use_container_width=True):
+                show_metric_info("Davies-Bouldin")
+        with col4:
+            if st.button("ARI", use_container_width=True):
+                show_metric_info("ARI")
+        
+        col5, col6, col7, col8 = st.columns(4)
+        with col5:
+            if st.button("NMI", use_container_width=True):
+                show_metric_info("NMI")
+    
+    # Métriques statistiques
+    with st.expander("📊 Métriques Statistiques", expanded=False):
+        st.info("Moyenne, Écart-type, Variance, Médiane, etc. - Métriques descriptives standard")
+    
+    # Recherche de métrique
+    st.subheader("🔍 Recherche de Métrique")
+    search_term = st.text_input("Entrez le nom d'une métrique")
+    if search_term:
+        show_metric_info(search_term)
+
+# =============================================================================
 # INTERFACE STREAMLIT AMÉLIORÉE
 # =============================================================================
 
@@ -1771,15 +1892,20 @@ def create_sidebar():
         
         with st.expander("🎨 Personnalisation du Thème", expanded=False):
             app_theme = st.selectbox("Thème de l'application", ["Light", "Dark", "Custom"])
+            create_tooltip("Choisissez l'apparence générale de l'application")
             
             if app_theme == "Custom":
                 col1, col2 = st.columns(2)
                 with col1:
                     primary_color = st.color_picker("Couleur principale", "#1f77b4")
+                    create_tooltip("Couleur dominante utilisée pour les boutons et titres")
                     background_color = st.color_picker("Arrière-plan", "#ffffff")
+                    create_tooltip("Couleur de fond de l'application")
                 with col2:
                     text_color = st.color_picker("Couleur du texte", "#000000")
+                    create_tooltip("Couleur du texte principal")
                     secondary_color = st.color_picker("Couleur secondaire", "#ff7f0e")
+                    create_tooltip("Couleur d'accentuation pour les éléments secondaires")
                 
                 custom_css = f"""
                     .stApp {{ background-color: {background_color}; color: {text_color}; }}
@@ -1800,24 +1926,33 @@ def create_sidebar():
             col1, col2 = st.columns(2)
             with col1:
                 st.session_state.graph_settings['width'] = st.slider("Largeur", 400, 1200, 800)
+                create_tooltip("Largeur des graphiques en pixels")
                 st.session_state.graph_settings['height'] = st.slider("Hauteur", 300, 900, 600)
+                create_tooltip("Hauteur des graphiques en pixels")
             with col2:
                 st.session_state.graph_settings['title_size'] = st.slider("Taille titre", 10, 24, 16)
+                create_tooltip("Taille de police des titres des graphiques")
                 st.session_state.graph_settings['axis_size'] = st.slider("Taille axes", 8, 20, 14)
+                create_tooltip("Taille de police des labels d'axes")
             
             st.session_state.graph_settings['legend_size'] = st.slider("Taille légende", 8, 20, 12)
+            create_tooltip("Taille de police des légendes")
             st.session_state.max_graphs_per_row = st.slider("Graphiques par ligne", 1, 4, 2)
+            create_tooltip("Nombre maximum de graphiques affichés côte à côte")
             st.session_state.max_categories = st.slider("Max catégories", 5, 50, 20)
+            create_tooltip("Nombre maximum de valeurs uniques pour qu'une variable soit considérée comme catégorielle")
         
         with st.expander("🔍 Gestion des Valeurs Manquantes", expanded=False):
             st.session_state.missing_threshold = st.slider(
                 "Seuil de valeurs manquantes (%)", 0, 100, 60
             )
+            create_tooltip("Pourcentage minimum de valeurs manquantes pour qu'une ligne soit considérée comme problématique")
             
             missing_action = st.radio(
                 "Action sur les valeurs manquantes:",
                 ["Afficher uniquement", "Exclure définitivement"]
             )
+            create_tooltip("Choisissez si les lignes avec trop de valeurs manquantes doivent être exclues ou seulement signalées")
             
             st.session_state.missing_action = missing_action
             st.info(f"Les lignes avec plus de {st.session_state.missing_threshold}% de valeurs manquantes seront {missing_action.lower()}")
@@ -1828,6 +1963,7 @@ def create_sidebar():
         # Sélecteur de séparateur
         separator_options = [ "automatique", "espace", ", (virgule)", "; (point-virgule)", "\t (tabulation)", "| (pipe)" ]
         selected_separator = st.selectbox("Séparateur de colonnes", separator_options)
+        create_tooltip("Séparateur utilisé dans les fichiers CSV/TXT. La détection automatique analyse le fichier pour trouver le bon séparateur.")
         
         separator_map = {
             ", (virgule)": ",",
@@ -1842,6 +1978,7 @@ def create_sidebar():
         # Upload files
         uploaded_files = st.file_uploader("Sélectionnez les fichiers à analyser", 
                                         type=['csv', 'txt', 'xlsx', 'xls'], accept_multiple_files=True)
+        create_tooltip("Chargez un ou plusieurs fichiers de données. Formats supportés: CSV, TXT, Excel (XLSX, XLS)")
         
         for uploaded_file in uploaded_files:
             if uploaded_file.name not in st.session_state.uploaded_files:
@@ -1863,6 +2000,7 @@ def create_sidebar():
             file_names = list(st.session_state.uploaded_files.keys())
             st.markdown("---")
             sampling_file = st.selectbox("📋 Fichier d'échantillonnage", file_names)
+            create_tooltip("Sélectionnez le fichier principal contenant les données d'échantillonnage à analyser")
             
             if sampling_file:
                 st.session_state.sampling_file = sampling_file
@@ -1870,6 +2008,7 @@ def create_sidebar():
                 
                 id_options = df.columns.tolist()
                 st.session_state.id_column = st.selectbox("🔑 Colonne ID", id_options, index=0)
+                create_tooltip("Colonne contenant les identifiants uniques des enregistrements")
         
         if st.session_state.uploaded_files and st.session_state.all_columns:
             st.markdown("---")
@@ -1877,6 +2016,7 @@ def create_sidebar():
                 st.subheader("Filtres par Colonne")
                 
                 filterable_cols = st.multiselect("Colonnes à filtrer", st.session_state.all_columns)
+                create_tooltip("Sélectionnez les colonnes sur lesquelles appliquer des filtres")
                 
                 for col in filterable_cols:
                     col_type = "numeric"
@@ -1913,6 +2053,7 @@ def create_sidebar():
                             min_val, max_val, (min_val, max_val),
                             key=f"range_{col}"
                         )
+                        create_tooltip(f"Définissez la plage de valeurs à conserver pour la colonne {col}")
                         st.session_state.filters[col] = ('range', selected_range)
                     
                     elif col_type == "categorical":
@@ -1928,6 +2069,7 @@ def create_sidebar():
                             default=unique_vals,
                             key=f"cat_{col}"
                         )
+                        create_tooltip(f"Sélectionnez les catégories à conserver pour la colonne {col}")
                         st.session_state.filters[col] = ('categories', selected_vals)
         
         if st.session_state.uploaded_files and st.session_state.all_columns:
@@ -1939,6 +2081,7 @@ def create_sidebar():
                     ["Prédéfini", "Personnalisé"],
                     index=0
                 )
+                create_tooltip("Choisissez entre des filtres prédéfinis (différence, ratio, etc.) ou des filtres personnalisés avec expressions")
                 
                 if st.session_state.filter_mode == "Prédéfini":
                     st.subheader("Filtres Prédéfinis")
@@ -1964,17 +2107,21 @@ def create_sidebar():
                     
                     selected_filter = st.selectbox("Sélectionnez un filtre prédéfini", 
                                                  list(predefined_filters.keys()))
+                    create_tooltip("Choisissez un type de filtre prédéfini selon votre besoin d'analyse")
                     
                     if selected_filter:
                         st.write(f"**Description:** {predefined_filters[selected_filter]['description']}")
                         st.code(predefined_filters[selected_filter]['expression'])
                         
                         threshold_value = st.number_input("Valeur du seuil", value=0.1, step=0.1)
+                        create_tooltip("Seuil à appliquer pour le filtre sélectionné")
                         
                         st.subheader("Mapping des Colonnes")
                         col_mapping = {}
                         col1_mapping = st.selectbox("Colonne 1 (col1)", [""] + st.session_state.all_columns)
+                        create_tooltip("Sélectionnez la première colonne pour le filtre")
                         col2_mapping = st.selectbox("Colonne 2 (col2)", [""] + st.session_state.all_columns)
+                        create_tooltip("Sélectionnez la deuxième colonne pour le filtre")
                         
                         if col1_mapping:
                             col_mapping['col1'] = col1_mapping
@@ -1982,6 +2129,7 @@ def create_sidebar():
                             col_mapping['col2'] = col2_mapping
                         
                         filter_name = st.text_input("Nom du filtre", f"filtre_{selected_filter.lower()}")
+                        create_tooltip("Donnez un nom significatif à votre filtre pour le retrouver facilement")
                         
                         if st.button("➕ Ajouter le filtre prédéfini"):
                             if filter_name and col1_mapping and col2_mapping:
@@ -1997,18 +2145,22 @@ def create_sidebar():
                     st.subheader("Filtre Personnalisé")
                     
                     filter_name = st.text_input("Nom du filtre", "mon_filtre_personnalise")
+                    create_tooltip("Nom unique pour identifier votre filtre personnalisé")
                     filter_expression = st.text_area("Expression du filtre", 
                                                    "abs(col1 - col2) < 0.1")
+                    create_tooltip("Expression Python valide utilisant les noms de colonnes génériques (col1, col2, etc.)")
                     
                     st.subheader("Mapping des Colonnes")
                     col_mapping = {}
                     num_columns = st.slider("Nombre de colonnes à utiliser", 1, 10, 2)
+                    create_tooltip("Nombre de colonnes à inclure dans votre filtre personnalisé")
                     
                     for i in range(1, num_columns + 1):
                         col_mapping[f'col{i}'] = st.selectbox(
                             f"Colonne {i}", 
                             [""] + st.session_state.all_columns
                         )
+                        create_tooltip(f"Sélectionnez la colonne réelle correspondant à col{i}")
                     
                     if st.button("➕ Ajouter le filtre personnalisé"):
                         if filter_name and filter_expression:
@@ -2048,6 +2200,7 @@ def create_sidebar():
                     numeric_cols,
                     default=numeric_cols[:min(15, len(numeric_cols))]
                 )
+                create_tooltip("Sélectionnez les colonnes numériques à inclure dans les matrices de corrélation")
                 
                 st.session_state.heatmap_columns = heatmap_columns
                 st.info(f"{len(heatmap_columns)} colonnes sélectionnées pour les heatmaps")
@@ -2104,6 +2257,7 @@ def create_advanced_clustering_interface(df):
             default=numeric_cols[:min(50, len(numeric_cols))],
             help="Sélectionnez les colonnes numériques à utiliser pour le clustering"
         )
+        create_tooltip("Choisissez les variables numériques qui serviront de base au clustering")
     
     with col2:
         n_clusters = st.slider(
@@ -2111,6 +2265,7 @@ def create_advanced_clustering_interface(df):
             min_value=2, max_value=20, value=3,
             help="Nombre de groupes à créer"
         )
+        create_tooltip("Nombre de clusters (groupes) que vous souhaitez identifier dans vos données")
     
     # Sélection de la méthode de clustering
     st.subheader("⚙️ Méthode de Clustering")
@@ -2129,6 +2284,7 @@ def create_advanced_clustering_interface(df):
         list(clustering_methods.keys()),
         help=clustering_methods[selected_method] if 'selected_method' in locals() else ""
     )
+    create_tooltip(clustering_methods[selected_method] if selected_method in clustering_methods else "Choisissez l'algorithme de clustering adapté à vos données")
     
     # Paramètres spécifiques à la méthode
     method_params = {}
@@ -2136,14 +2292,17 @@ def create_advanced_clustering_interface(df):
         col1, col2 = st.columns(2)
         with col1:
             method_params['eps'] = st.number_input("EPS (distance maximale)", value=0.5, step=0.1)
+            create_tooltip("Distance maximale entre deux points pour qu'ils soient considérés comme voisins")
         with col2:
             method_params['min_samples'] = st.number_input("Échantillons minimum", value=5, min_value=1)
+            create_tooltip("Nombre minimum de points requis pour former un cluster dense")
     elif selected_method == "Agglomerative":
         method_params['linkage'] = st.selectbox(
             "Lien", 
             ["ward", "complete", "average", "single"],
             help="Méthode de liaison pour le clustering hiérarchique"
         )
+        create_tooltip("Critère de liaison utilisé pour mesurer la distance entre clusters")
     elif selected_method == "Ensemble":
         st.info("🔗 L'approche ensemble combine plusieurs méthodes pour un résultat plus robuste")
         
@@ -2152,6 +2311,7 @@ def create_advanced_clustering_interface(df):
             ["KMeans", "DBSCAN", "Agglomerative", "Spectral", "Gaussian Mixture"],
             default=["KMeans", "Agglomerative", "Gaussian Mixture"]
         )
+        create_tooltip("Sélectionnez les méthodes de clustering à combiner pour une approche consensus")
         
         method_params['ensemble_methods'] = ensemble_methods
     
@@ -2163,6 +2323,7 @@ def create_advanced_clustering_interface(df):
         [""] + df.columns.tolist(),
         help="Comparez les clusters avec cette colonne pour évaluer la correspondance"
     )
+    create_tooltip("Colonne existante permettant de valider la qualité du clustering (vérité terrain)")
     
     if reference_col == "":
         reference_col = None
@@ -2173,13 +2334,17 @@ def create_advanced_clustering_interface(df):
     col1, col2, col3 = st.columns(3)
     with col1:
         x_axis = st.selectbox("Axe X", selected_cols, index=0)
+        create_tooltip("Variable à afficher sur l'axe X de la visualisation")
     with col2:
         y_axis = st.selectbox("Axe Y", selected_cols, index=min(1, len(selected_cols)-1))
+        create_tooltip("Variable à afficher sur l'axe Y de la visualisation")
     with col3:
         use_3d = st.checkbox("Visualisation 3D")
+        create_tooltip("Active la visualisation en 3 dimensions")
         z_axis = None
         if use_3d and len(selected_cols) >= 3:
             z_axis = st.selectbox("Axe Z", selected_cols, index=min(2, len(selected_cols)-1))
+            create_tooltip("Variable à afficher sur l'axe Z de la visualisation 3D")
     
     # Bouton d'exécution
     if st.button("🚀 Exécuter le Clustering", type="primary"):
@@ -2387,6 +2552,7 @@ def create_advanced_multivariate_analysis(df):
             default=numeric_cols[:min(50, len(numeric_cols))],
             help="Sélectionnez au moins 3 colonnes numériques"
         )
+        create_tooltip("Variables numériques à inclure dans l'analyse en composantes principales")
     
     with col2:
         color_col = st.selectbox(
@@ -2394,6 +2560,7 @@ def create_advanced_multivariate_analysis(df):
             [""] + df.columns.tolist(),
             help="Colonne utilisée pour colorer les points sur le graphique PCA"
         )
+        create_tooltip("Variable catégorielle pour colorer les points dans la visualisation PCA")
         if color_col == "":
             color_col = None
     
@@ -2403,10 +2570,12 @@ def create_advanced_multivariate_analysis(df):
             ["Aucun", "KMeans", "Agglomerative", "Gaussian Mixture"],
             help="Applique un clustering sur les données transformées par PCA"
         )
+        create_tooltip("Algorithme de clustering à appliquer sur les composantes principales")
         
         n_clusters = 3
         if clustering_method != "Aucun":
             n_clusters = st.slider("Nombre de clusters PCA", 2, 30, 3)
+            create_tooltip("Nombre de clusters à identifier dans l'espace des composantes principales")
     
     # Métrique de correspondance
     correspondence_metric = st.selectbox(
@@ -2414,6 +2583,7 @@ def create_advanced_multivariate_analysis(df):
         ["iou", "ari", "nmi"],
         help="Métrique pour comparer les clusters avant et après PCA"
     )
+    create_tooltip("Métrique utilisée pour évaluer la similarité entre les clusters originaux et PCA")
     
     if st.button("🚀 Lancer l'analyse multivariée", type="primary"):
         if len(selected_cols) < 3:
@@ -2577,10 +2747,10 @@ def create_main_interface():
         st.dataframe(df.head(10), width='stretch')
         st.write(f"**{len(df)}** enregistrements après filtrage")
     
-    # Onglets d'analyse (AVEC CLUSTERING AVANCÉ ET ANALYSE MULTIVARIÉE)
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    # Onglets d'analyse (AVEC LE NOUVEL ONGLET MÉTRIQUES)
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📈 Distribution", "🔗 Corrélations", "📊 Catégoriel", 
-        "📋 Échantillonnage", "🔥 Heatmaps", "🔍 Clustering", "⚡ Avancé"
+        "📋 Échantillonnage", "🔥 Heatmaps", "🔍 Clustering", "⚡ Avancé", "📚 Métriques"
     ])
     
     # Onglet Distribution
@@ -2592,9 +2762,11 @@ def create_main_interface():
             numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
             all_cols = df.columns.tolist()
             selected_col = st.selectbox("Colonne à analyser", all_cols, key="dist_col")
+            create_tooltip("Sélectionnez la variable dont vous souhaitez étudier la distribution")
         with col2:
             plot_types = ["histogram", "box", "violin", "density", "bar", "pie"]
             plot_type = st.selectbox("Type de visualisation", plot_types, key="dist_type")
+            create_tooltip("Choisissez le type de graphique le plus adapté à votre analyse")
         with col3:
             nbins = 30
             density = False
@@ -2602,15 +2774,20 @@ def create_main_interface():
             
             if plot_type == "histogram":
                 nbins = st.slider("Nombre d'intervalles", 5, 100, 30, key="dist_nbins")
+                create_tooltip("Nombre de barres dans l'histogramme")
                 density = st.checkbox("Afficher la densité", key="dist_density")
+                create_tooltip("Superpose une courbe de densité à l'histogramme")
             elif plot_type == "bar":
                 y_col_option = st.selectbox("Colonne Y (optionnel)", [None] + all_cols, key="dist_y_col")
+                create_tooltip("Variable quantitative pour un diagramme en barres groupé")
         
         col1, col2 = st.columns(2)
         with col1:
             color_col = st.selectbox("Couleur", [None] + all_cols, key="dist_color")
+            create_tooltip("Variable catégorielle pour colorer les éléments du graphique")
         with col2:
             facet_col = st.selectbox("Facettes", [None] + all_cols, key="dist_facet")
+            create_tooltip("Variable catégorielle pour créer des sous-graphiques multiples")
         
         if selected_col:
             fig = create_custom_plot(
@@ -2632,30 +2809,38 @@ def create_main_interface():
             numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
             all_cols = df.columns.tolist()
             x_col = st.selectbox("Variable X", all_cols, key="corr_x")
+            create_tooltip("Variable indépendante ou explicative")
         with col2:
             y_col = st.selectbox("Variable Y", all_cols, key="corr_y")
+            create_tooltip("Variable dépendante ou à expliquer")
         with col3:
             use_3d_corr = st.checkbox("Visualisation 3D", key="corr_3d")
+            create_tooltip("Active la visualisation tridimensionnelle")
             z_col = None
             if use_3d_corr:
                 z_col = st.selectbox("Variable Z", all_cols, key="corr_z")
+                create_tooltip("Troisième variable pour l'analyse 3D")
         
         if not use_3d_corr:
             corr_types = ["scatter", "line", "density", "pairplot"]
             corr_type = st.selectbox("Type de graphique", corr_types, key="corr_type")
+            create_tooltip("Type de visualisation des relations entre variables")
         else:
             corr_type = "scatter"
         
         col1, col2, col3 = st.columns(3)
         with col1:
             color_col = st.selectbox("Couleur pour corrélation", [None] + all_cols, key="corr_color")
+            create_tooltip("Variable de coloration pour différencier les groupes")
         with col2:
             if not use_3d_corr:
                 facet_col = st.selectbox("Facettes pour corrélation", [None] + all_cols, key="corr_facet")
+                create_tooltip("Crée des sous-graphiques par catégorie")
         with col3:
             if corr_type == "scatter" and not use_3d_corr:
                 trendline_options = [None, "ols", "lowess", "expanding", "rolling"]
                 trendline = st.selectbox("Ligne de tendance", trendline_options, key="corr_trendline")
+                create_tooltip("Ajoute une ligne de régression ou de tendance")
             else:
                 trendline = None
         
@@ -2698,17 +2883,22 @@ def create_main_interface():
             col1, col2, col3 = st.columns(3)
             with col1:
                 cat_col = st.selectbox("Colonne catégorielle", categorical_cols, key="cat_col")
+                create_tooltip("Variable catégorielle à analyser")
             with col2:
                 cat_plot_types = ["bar", "pie", "box", "violin", "histogram"]
                 cat_plot_type = st.selectbox("Type de graphique", cat_plot_types, key="cat_plot_type")
+                create_tooltip("Type de visualisation pour données catégorielles")
             with col3:
                 value_col = st.selectbox("Colonne de valeurs", [None] + numeric_cols, key="cat_value")
+                create_tooltip("Variable quantitative pour les graphiques à deux variables")
             
             col1, col2 = st.columns(2)
             with col1:
                 color_col = st.selectbox("Couleur pour catégoriel", [None] + all_cols, key="cat_color")
+                create_tooltip("Variable de coloration supplémentaire")
             with col2:
                 facet_col = st.selectbox("Facettes pour catégoriel", [None] + all_cols, key="cat_facet")
+                create_tooltip("Variable de segmentation pour sous-graphiques")
             
             if cat_col:
                 if value_col and cat_plot_type in ["box", "violin"]:
@@ -2762,11 +2952,14 @@ def create_main_interface():
             col1, col2, col3 = st.columns(3)
             with col1:
                 interval_prefix = st.text_input("Préfixe intervalles", "Interval_", key="int_prefix")
+                create_tooltip("Préfixe des colonnes contenant les intervalles d'échantillonnage")
             with col2:
                 stat_prefixes = st.text_input("Préfixes stats", "Ech_count_,Ech_mean_,Ech_std_,Ech_min_,Ech_max_", 
                                             key="stat_prefix")
+                create_tooltip("Préfixes des colonnes de statistiques d'échantillonnage (séparés par des virgules)")
             with col3:
                 num_prefix = st.text_input("Préfixe nombre", "Numb_intervals_", key="num_prefix")
+                create_tooltip("Préfixe de la colonne indiquant le nombre d'intervalles")
             
             stat_list = [s.strip() for s in stat_prefixes.split(",") if s.strip()]
             
@@ -2785,6 +2978,7 @@ def create_main_interface():
                     selected_suffixes = st.multiselect("Suffixes à visualiser", 
                                                      available_suffixes, 
                                                      default=available_suffixes[:min(2, len(available_suffixes))])
+                    create_tooltip("Sélectionnez les groupes d'échantillonnage à visualiser")
                 with col2:
                     available_stats = set()
                     for suffix in selected_suffixes:
@@ -2794,8 +2988,10 @@ def create_main_interface():
                     selected_stats = st.multiselect("Statistiques à visualiser", 
                                                   list(available_stats),
                                                   default=list(available_stats)[:min(2, len(available_stats))])
+                    create_tooltip("Types de statistiques à afficher (moyenne, écart-type, etc.)")
                 
                 viz_type = st.radio("Type de visualisation", ["line", "bar"], horizontal=True)
+                create_tooltip("Choisissez entre un graphique linéaire ou en barres")
                 
                 if selected_suffixes and selected_stats:
                     fig = create_sampling_visualization(
@@ -2809,6 +3005,7 @@ def create_main_interface():
                         col1, col2 = st.columns(2)
                         with col1:
                             pdf_name = st.text_input("Nom du PDF", "analyse_echantillonnage.pdf")
+                            create_tooltip("Nom du fichier PDF à générer")
                         with col2:
                             if st.button("💾 Exporter en PDF"):
                                 pdf_data = save_plot_as_pdf(fig, pdf_name)
@@ -2839,9 +3036,11 @@ def create_main_interface():
                     "Type de heatmap",
                     ["heatmap", "heatmap_brice", "heatmap_brice1"]
                 )
+                create_tooltip("Type de corrélation à calculer: Pearson (standard), Brice ou Brice1 (variations)")
 
             with col2:
                 max_default_cols = st.slider("Nombre de colonnes par défaut", 5, 30, 15)
+                create_tooltip("Nombre maximum de colonnes à inclure par défaut dans la heatmap")
 
             st.subheader("Sélection des colonnes numériques")
 
@@ -2855,6 +3054,7 @@ def create_main_interface():
                     options=numeric_cols,
                     default=default_selected
                 )
+                create_tooltip("Sélectionnez les variables numériques pour la matrice de corrélation")
 
                 st.info(f"**{len(selected_columns)}** colonnes sélectionnées sur **{len(numeric_cols)}** disponibles")
 
@@ -2862,11 +3062,14 @@ def create_main_interface():
             col1, col2, col3 = st.columns(3)
             with col1:
                 show_values = st.checkbox("Afficher les valeurs", value=True)
+                create_tooltip("Affiche les valeurs numériques dans les cellules de la heatmap")
             with col2:
                 color_scale = st.selectbox("Échelle de couleurs", 
                                          ["RdBu_r", "Viridis", "Plasma", "Inferno", "Blues", "Reds"])
+                create_tooltip("Palette de couleurs pour la visualisation")
             with col3:
                 fig_width = st.slider("Largeur du graphique", 600, 1200, 800)
+                create_tooltip("Largeur de la heatmap en pixels")
 
             if st.button("🔄 Générer la heatmap", type="primary"):
                 if len(selected_columns) < 2:
@@ -3004,6 +3207,7 @@ def create_main_interface():
             numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
             if numeric_cols:
                 selected_col = st.selectbox("Colonne à analyser", numeric_cols, key="outlier_col")
+                create_tooltip("Variable numérique pour la détection des valeurs aberrantes")
                 
                 if selected_col:
                     outliers, lower_bound, upper_bound = detect_outliers_iqr(df, selected_col)
@@ -3045,8 +3249,10 @@ def create_main_interface():
                 col1, col2 = st.columns(2)
                 with col1:
                     date_col = st.selectbox("Colonne de date", date_cols, key="date_col")
+                    create_tooltip("Colonne contenant les dates ou timestamps")
                 with col2:
                     value_col = st.selectbox("Colonne de valeurs", numeric_cols, key="ts_value_col")
+                    create_tooltip("Variable numérique à analyser dans le temps")
                 
                 if date_col and value_col:
                     try:
@@ -3084,7 +3290,9 @@ def create_main_interface():
         col1, col2 = st.columns(2)
         with col1:
             export_format = st.radio("Format d'export", ["CSV", "Excel", "JSON"], horizontal=True)
+            create_tooltip("Format de fichier pour l'export des données")
             export_name = st.text_input("Nom du fichier", "donnees_analyse")
+            create_tooltip("Nom de base pour le fichier exporté")
         
         with col2:
             if st.button("📤 Exporter les données filtrées"):
@@ -3114,6 +3322,10 @@ def create_main_interface():
                         file_name=f"{export_name}.json",
                         mime="application/json"
                     )
+    
+    # NOUVEL ONGLET: DICTIONNAIRE DES MÉTRIQUES
+    with tab8:
+        create_metrics_dictionary()
 
 def main():
     """Fonction principale de l'application"""
@@ -3132,7 +3344,7 @@ def main():
     # Pied de page
     st.markdown("---")
     st.markdown("**Application développée pour l'analyse avancée des résultats d'entraînement IA**")
-    st.markdown("**BRICE KENGNI ZANGUIM** • *Dernière mise à jour: 2025-01-23*")
+    st.markdown("**BRICE KENGNI ZANGUIM** • *Dernière mise à jour: 2025-09-23*")
 
 if __name__ == "__main__":
     main()
