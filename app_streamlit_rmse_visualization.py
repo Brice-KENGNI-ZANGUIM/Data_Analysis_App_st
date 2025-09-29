@@ -37,6 +37,19 @@ from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 
+# Nouveaux imports pour les datasets sklearn et la régression
+from sklearn import datasets
+from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.svm import SVR
+from sklearn.neural_network import MLPRegressor
+import scipy.optimize as opt
+
 # =============================================================================
 # CONFIGURATION DE LA PAGE
 # =============================================================================
@@ -125,6 +138,71 @@ def load_data(uploaded_file, separator=None):
             return None
     except Exception as e:
         st.error(f"Erreur lors du chargement de {uploaded_file.name}: {e}")
+        return None
+
+def load_sklearn_dataset(dataset_name):
+    """Charge un dataset de sklearn avec une gestion améliorée"""
+    dataset_map = {
+        'Iris': datasets.load_iris,
+        'Diabète': datasets.load_diabetes,
+        'Digits': datasets.load_digits,
+        'Linnerud': datasets.load_linnerud,
+        'Wine': datasets.load_wine,
+        'Breast Cancer': datasets.load_breast_cancer,
+        'California Housing': datasets.fetch_california_housing,
+    }
+    
+    try:
+        if dataset_name in dataset_map:
+            data = dataset_map[dataset_name]()
+            
+            # Gestion différenciée selon le type de dataset
+            if hasattr(data, 'frame') and data.frame is not None:
+                # Cas des datasets avec format DataFrame intégré
+                df = data.frame
+            elif hasattr(data, 'data') and hasattr(data, 'feature_names'):
+                # Cas standard avec data et feature_names
+                df = pd.DataFrame(data.data, columns=data.feature_names)
+                
+                # Ajouter la target si elle existe
+                if hasattr(data, 'target'):
+                    if hasattr(data, 'target_names'):
+                        # Pour les datasets de classification, mapper les targets aux noms
+                        target_names = data.target_names
+                        target_values = data.target
+                        
+                        # Vérifier si c'est une classification multi-classes
+                        if len(target_names) > 0:
+                            # Créer une colonne avec les noms des classes
+                            if len(target_names) == len(np.unique(target_values)):
+                                df['target'] = target_values
+                                df['target_name'] = [target_names[i] for i in target_values]
+                            else:
+                                # Cas où les target_names ne correspondent pas directement aux valeurs
+                                df['target'] = target_values
+                        else:
+                            df['target'] = target_values
+                    else:
+                        # Pas de noms de classes, juste les valeurs
+                        df['target'] = data.target
+            else:
+                st.error(f"Format de dataset non supporté: {dataset_name}")
+                return None
+            
+            # Nettoyer les noms de colonnes
+            df.columns = [col.replace(' ', '_').replace('<', '').replace('>', '').lower() for col in df.columns]
+            
+            # S'assurer qu'il n'y a pas de colonnes dupliquées
+            df = df.loc[:, ~df.columns.duplicated()]
+            
+            return df
+        else:
+            st.error(f"Dataset {dataset_name} non trouvé")
+            return None
+    except Exception as e:
+        st.error(f"Erreur lors du chargement du dataset {dataset_name}: {str(e)}")
+        import traceback
+        st.error(f"Détails de l'erreur: {traceback.format_exc()}")
         return None
 
 def detect_column_types(df, max_categories=20):
@@ -265,7 +343,11 @@ def apply_advanced_filters(df, advanced_filters, column_mapping):
     return filtered_df
 
 def calculate_brice_correlation(x, y):
-    """Calcule les corrélations Brice et Brice1"""
+    """
+    Calcule les corrélations Brice (non-centrée) et Brice1 (centrée).
+    L'implémentation de Brice est corrigée pour utiliser les sommes
+    conformément à la formule du cosinus entre vecteurs.
+    """
     try:
         # Convertir en arrays numpy
         x = np.asarray(x).astype(float)
@@ -281,29 +363,49 @@ def calculate_brice_correlation(x, y):
         # Filtrage effectif : ne garder que les paires valides
         x, y = x[mask], y[mask]
         
-        # --- Corrélation Brice : sur les variations (dérivées discrètes) ---
+        # --- 1. Variations (Dérivées Discrètes) ---
         x1 = x[1:] - x[:-1]
         y1 = y[1:] - y[:-1]
         
-        # Écarts-types des variations
-        s1 = np.sqrt(np.nanmean(x1 * x1))
-        s2 = np.sqrt(np.nanmean(y1 * y1))
+        # Filtrer les NaN créés par les différences
+        mask_diff = (~np.isnan(x1)) & (~np.isnan(y1))
+        x1, y1 = x1[mask_diff], y1[mask_diff]
+
+        # --- 2. Corrélation Brice (Non-Centrée/Cosinus) ---
+        # Formule: Sum(x1*y1) / [sqrt(Sum(x1^2) * Sum(y1^2))]
         
-        brice_corr = np.nanmean(x1 * y1) / (s1 * s2) if (s1 * s2) != 0 else np.nan
+        sum_xy = np.nansum(x1 * y1)
+        sum_x2 = np.nansum(x1 * x1)
+        sum_y2 = np.nansum(y1 * y1)
         
-        # --- Corrélation Brice1 : sur les variations centrées ---
+        denominator = np.sqrt(sum_x2 * sum_y2)
+        
+        brice_corr = sum_xy / denominator if denominator != 0 else np.nan
+        
+        # --- 3. Corrélation Brice1 (Centrée/Pearson Classique) ---
+        # Formule: Corr(x1, y1)
+        
         x1_centered = x1 - np.nanmean(x1)
         y1_centered = y1 - np.nanmean(y1)
         
-        s1_centered = np.sqrt(np.nanmean(x1_centered * x1_centered))
-        s2_centered = np.sqrt(np.nanmean(y1_centered * y1_centered))
+        # La covariance des variations
+        covariance = np.nanmean(x1_centered * y1_centered)
         
-        brice1_corr = np.nanmean(x1_centered * y1_centered) / (s1_centered * s2_centered) if (s1_centered * s2_centered) != 0 else np.nan
+        # L'écart-type des variations centrées (sqrt de la variance)
+        std_x1_centered = np.sqrt(np.nanmean(x1_centered * x1_centered))
+        std_y1_centered = np.sqrt(np.nanmean(y1_centered * y1_centered))
+        
+        std_product = std_x1_centered * std_y1_centered
+        
+        brice1_corr = covariance / std_product if std_product != 0 else np.nan
         
         return {'brice': brice_corr, 'brice1': brice1_corr}
     
     except Exception as e:
+        # Gérer toute erreur imprévue (comme une entrée non valide)
+        print(f"Erreur lors du calcul: {e}")
         return {'brice': np.nan, 'brice1': np.nan}
+
 
 def create_custom_plot(data, x_col, y_col=None, z_col=None, plot_type="histogram", 
                       color_col=None, facet_col=None, theme_settings=None,
@@ -543,9 +645,14 @@ def create_custom_plot(data, x_col, y_col=None, z_col=None, plot_type="histogram
                                        color_discrete_sequence=custom_colors)
                 
                 elif plot_type == "density" and y_col:
+                    # CORRECTION: Utiliser density_contour pour les courbes de densité 2D
                     fig = px.density_contour(data, x=x_col, y=y_col, color=color_col,
                                             title=f"Densité de {x_col} vs {y_col}",
                                             color_discrete_sequence=custom_colors)
+                    # Ajouter les points pour une meilleure visualisation
+                    fig.add_trace(go.Scatter(x=data[x_col], y=data[y_col], 
+                                           mode='markers', marker=dict(size=3, opacity=0.3),
+                                           name='Points', showlegend=False))
                 
                 elif plot_type == "bar":
                     if y_col:
@@ -1105,7 +1212,7 @@ def calculate_cluster_agreement_matrix(clusterings):
     
     return agreement_matrix
 
-def advanced_multivariate_analysis(df, numeric_cols, color_col=None, clustering_method=None, n_clusters=3):
+def advanced_multivariate_analysis(df, numeric_cols, color_col=None, clustering_method=None, n_clusters=3, pca_method="récursive"):
     """Analyse multivariée avancée avec PCA et clustering"""
     # Préparer les données
     data = df[numeric_cols].dropna()
@@ -1117,16 +1224,23 @@ def advanced_multivariate_analysis(df, numeric_cols, color_col=None, clustering_
     scaler = StandardScaler()
     scaled_data = scaler.fit_transform(data)
     
-    # PCA avec le nombre correct de composantes
-    component_list = [ i__ for i__ in range(3, len(numeric_cols)) ][::-1]
-    for n_components in component_list :                            
-        pca = PCA(n_components=n_components)
-        scaled_data = pca.fit_transform(scaled_data)
-                            
-    pca_result = scaled_data
+    if pca_method == "récursive":
+        # PCA récursif en chaîne avec le nombre correct de composantes finale
+        # Beaucoup plus efficace qu'un simple PCA direct 
+        component_list = [i for i in range(3, len(numeric_cols))][::-1]
+        for n_components in component_list:                            
+            pca = PCA(n_components=n_components)
+            scaled_data = pca.fit_transform(scaled_data)
+        pca_result = scaled_data
+        n_components_final = 3
+    else:
+        # Méthode directe en une seule étape
+        pca = PCA(n_components=3)
+        pca_result = pca.fit_transform(scaled_data)
+        n_components_final = 3
 
     # Créer un DataFrame avec les composantes principales
-    pca_columns = [f'PC{i+1}' for i in range(n_components)]
+    pca_columns = [f'PC{i+1}' for i in range(n_components_final)]
     pca_df = pd.DataFrame(data=pca_result, columns=pca_columns)
     
     # Ajouter la colonne de couleur si spécifiée
@@ -1702,6 +1816,371 @@ def create_optimization_interface(df):
         )
 
 # =============================================================================
+# NOUVELLES FONCTIONS POUR LA RÉGRESSION AVANCÉE
+# =============================================================================
+
+def create_regression_interface(df):
+    """Crée l'interface pour la régression avancée"""
+    st.header("📈 Régression Avancée")
+    
+    # Sélection des variables
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    
+    if len(numeric_cols) < 2:
+        st.warning("❌ La régression nécessite au moins 2 colonnes numériques")
+        return
+    
+    st.subheader("🎯 Configuration de la Régression")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        target_col = st.selectbox("Variable cible (Y)", numeric_cols, key="reg_target")
+    with col2:
+        feature_cols = st.multiselect("Variables explicatives (X)", numeric_cols, 
+                                    default=numeric_cols[:min(5, len(numeric_cols))],
+                                    key="reg_features")
+    
+    if not feature_cols:
+        st.error("❌ Sélectionnez au moins une variable explicative")
+        return
+    
+    # Type de régression
+    st.subheader("🔧 Type de Régression")
+    
+    regression_type = st.radio("Type de régression", 
+                              ["Linéaire", "Polynomiale", "Personnalisée", "AutoML"],
+                              horizontal=True)
+    
+    if regression_type == "Linéaire":
+        model_type = st.selectbox("Modèle linéaire", 
+                                ["Régression Linéaire", "Ridge", "Lasso", "ElasticNet"])
+        
+        if model_type in ["Ridge", "Lasso", "ElasticNet"]:
+            alpha = st.slider("Paramètre de régularisation (alpha)", 0.0, 10.0, 1.0, 0.1)
+    
+    elif regression_type == "Polynomiale":
+        degree = st.slider("Degré polynomial", 1, 10, 2)
+        model_type = st.selectbox("Modèle de base", 
+                                ["Régression Linéaire", "Ridge", "Lasso"])
+        if model_type in ["Ridge", "Lasso", "ElasticNet"]:
+            alpha = st.slider("Paramètre de régularisation (alpha)", 0.0, 10.0, 1.0, 0.1)
+    
+    elif regression_type == "Personnalisée":
+        st.info("""
+        **Syntaxe de la fonction personnalisée :**
+        - Utilisez `x1`, `x2`, ... pour les variables explicatives
+        - Utilisez `a`, `b`, `c`, ... pour les paramètres à optimiser
+        - Exemple : `a * x1 + b * x2**2 + c * exp(x3)`
+        """)
+        
+        custom_function = st.text_area("Fonction personnalisée", 
+                                     "a * x1 + b * x2 + c",
+                                     height=100)
+        
+        # Détection des paramètres
+        param_pattern = r'\b([a-zA-Z])\b'
+        detected_params = set(re.findall(param_pattern, custom_function))
+        
+        # Exclure les noms de variables (x1, x2, etc.)
+        feature_pattern = r'\bx\d+\b'
+        feature_names = set(re.findall(feature_pattern, custom_function))
+        params = [p for p in detected_params if p not in [name[0] for name in feature_names]]
+        
+        if params:
+            st.write("**Paramètres détectés :**", ", ".join(params))
+            
+            # Configuration des bornes pour chaque paramètre
+            param_bounds = {}
+            for param in params:
+                col1, col2 = st.columns(2)
+                with col1:
+                    min_val = st.number_input(f"Min {param}", value=-10.0, key=f"min_{param}")
+                with col2:
+                    max_val = st.number_input(f"Max {param}", value=10.0, key=f"max_{param}")
+                param_bounds[param] = (min_val, max_val)
+    
+    elif regression_type == "AutoML":
+        st.info("🤖 L'AutoML teste automatiquement plusieurs modèles et sélectionne le meilleur")
+        models_to_test = st.multiselect("Modèles à tester",
+                                      ["Linear", "Random Forest", "Gradient Boosting", "SVR", "Neural Network"],
+                                      default=["Linear", "Random Forest", "Gradient Boosting"])
+    
+    # Options avancées
+    with st.expander("⚙️ Options avancées"):
+        col1, col2 = st.columns(2)
+        with col1:
+            test_size = st.slider("Taille de l'ensemble de test", 0.1, 0.5, 0.2, 0.05)
+            random_state = st.number_input("Seed aléatoire", value=42)
+        with col2:
+            cv_folds = st.slider("Nombre de folds pour validation croisée", 2, 10, 5)
+            scoring = st.selectbox("Métrique d'évaluation", 
+                                ["r2", "neg_mean_squared_error", "neg_mean_absolute_error"])
+    
+    # Bouton d'exécution
+    if st.button("🚀 Exécuter la régression", type="primary"):
+        if len(feature_cols) == 0:
+            st.error("❌ Sélectionnez au moins une variable explicative")
+            return
+        
+        # Préparer les données
+        data = df[feature_cols + [target_col]].dropna()
+        
+        if len(data) < 10:
+            st.error("❌ Pas assez de données valides pour la régression")
+            return
+        
+        X = data[feature_cols]
+        y = data[target_col]
+        
+        # Séparation train-test
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=random_state
+        )
+        
+        with st.spinner("Entraînement du modèle en cours..."):
+            if regression_type == "Linéaire":
+                if model_type == "Régression Linéaire":
+                    model = LinearRegression()
+                elif model_type == "Ridge":
+                    model = Ridge(alpha=alpha)
+                elif model_type == "Lasso":
+                    model = Lasso(alpha=alpha)
+                elif model_type == "ElasticNet":
+                    model = ElasticNet(alpha=alpha)
+                
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+                
+            elif regression_type == "Polynomiale":
+                # Créer les features polynomiales
+                poly = PolynomialFeatures(degree=degree)
+                X_train_poly = poly.fit_transform(X_train)
+                X_test_poly = poly.transform(X_test)
+                
+                if model_type == "Régression Linéaire":
+                    model = LinearRegression()
+                elif model_type == "Ridge":
+                    model = Ridge(alpha=alpha)
+                elif model_type == "Lasso":
+                    model = Lasso(alpha=alpha)
+                
+                model.fit(X_train_poly, y_train)
+                y_pred = model.predict(X_test_poly)
+                
+            elif regression_type == "Personnalisée":
+                # Optimisation non linéaire pour la fonction personnalisée
+                def objective(params):
+                    # Créer un dictionnaire paramètre:valeur
+                    param_dict = {p: v for p, v in zip(params, params)}
+                    
+                    # Évaluer la fonction pour chaque ligne
+                    predictions = []
+                    for i in range(len(X)):
+                        # Créer le contexte d'évaluation
+                        context = param_dict.copy()
+                        for j, col in enumerate(feature_cols):
+                            context[f'x{j+1}'] = X.iloc[i][col]
+                        
+                        try:
+                            pred = eval(custom_function, {"__builtins__": {}}, context)
+                            predictions.append(pred)
+                        except:
+                            return np.inf
+                    
+                    # Calculer l'erreur quadratique moyenne
+                    mse = np.mean((np.array(predictions) - y.values) ** 2)
+                    return mse
+                
+                # Bornes initiales pour les paramètres
+                initial_guess = [0.0] * len(params)
+                bounds = [param_bounds[p] for p in params]
+                
+                # Optimisation
+                result = opt.minimize(objective, initial_guess, bounds=bounds, method='L-BFGS-B')
+                
+                if result.success:
+                    best_params = {p: v for p, v in zip(params, result.x)}
+                    st.success("✅ Optimisation réussie!")
+                    
+                    # Calculer les prédictions avec les paramètres optimaux
+                    y_pred = []
+                    for i in range(len(X_test)):
+                        context = best_params.copy()
+                        for j, col in enumerate(feature_cols):
+                            context[f'x{j+1}'] = X_test.iloc[i][col]
+                        y_pred.append(eval(custom_function, {"__builtins__": {}}, context))
+                    y_pred = np.array(y_pred)
+                    
+                    model = type('CustomModel', (), {'params': best_params, 'function': custom_function})()
+                else:
+                    st.error("❌ Échec de l'optimisation")
+                    return
+                
+            elif regression_type == "AutoML":
+                # Tester plusieurs modèles
+                models = {
+                    "Linear": LinearRegression(),
+                    "Random Forest": RandomForestRegressor(random_state=random_state),
+                    "Gradient Boosting": GradientBoostingRegressor(random_state=random_state),
+                    "SVR": SVR(),
+                    "Neural Network": MLPRegressor(random_state=random_state, max_iter=1000)
+                }
+                
+                best_score = -np.inf
+                best_model = None
+                best_name = ""
+                
+                results = []
+                for name in models_to_test:
+                    if name in models:
+                        model = models[name]
+                        
+                        # Validation croisée
+                        cv_scores = cross_val_score(model, X_train, y_train, 
+                                                  cv=cv_folds, scoring=scoring)
+                        mean_score = np.mean(cv_scores)
+                        
+                        results.append({
+                            'Modèle': name,
+                            'Score CV': f"{mean_score:.4f}",
+                            'Écart-type': f"{np.std(cv_scores):.4f}"
+                        })
+                        
+                        if mean_score > best_score:
+                            best_score = mean_score
+                            best_model = model
+                            best_name = name
+                
+                # Entraîner le meilleur modèle sur tout l'ensemble d'entraînement
+                best_model.fit(X_train, y_train)
+                y_pred = best_model.predict(X_test)
+                model = best_model
+                
+                st.success(f"✅ Meilleur modèle : {best_name} (score: {best_score:.4f})")
+                
+                # Afficher les résultats de tous les modèles
+                st.subheader("📊 Comparaison des modèles")
+                results_df = pd.DataFrame(results)
+                st.dataframe(results_df, width='stretch')
+        
+        # Évaluation du modèle
+        st.subheader("📈 Performance du Modèle")
+        
+        r2 = r2_score(y_test, y_pred)
+        mse = mean_squared_error(y_test, y_pred)
+        mae = mean_absolute_error(y_test, y_pred)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("R²", f"{r2:.4f}")
+        with col2:
+            st.metric("MSE", f"{mse:.4f}")
+        with col3:
+            st.metric("MAE", f"{mae:.4f}")
+        
+        # Visualisation des résultats
+        st.subheader("👁️ Visualisation des Prédictions")
+        
+        results_df = pd.DataFrame({
+            'Valeur Réelle': y_test,
+            'Prédiction': y_pred,
+            'Résidu': y_test - y_pred
+        })
+        
+        # Graphique des prédictions vs valeurs réelles
+        fig1 = px.scatter(results_df, x='Valeur Réelle', y='Prédiction',
+                         title="Prédictions vs Valeurs Réelles",
+                         trendline="ols")
+        fig1.add_trace(go.Scatter(x=[y_test.min(), y_test.max()], 
+                                y=[y_test.min(), y_test.max()],
+                                mode='lines', name='Ligne parfaite',
+                                line=dict(color='red', dash='dash')))
+        st.plotly_chart(fig1, width='stretch')
+        
+        # Graphique des résidus
+        fig2 = px.scatter(results_df, x='Prédiction', y='Résidu',
+                         title="Analyse des Résidus")
+        fig2.add_hline(y=0, line_dash="dash", line_color="red")
+        st.plotly_chart(fig2, width='stretch')
+        
+        # Distribution des résidus
+        fig3 = px.histogram(results_df, x='Résidu', 
+                           title="Distribution des Résidus",
+                           nbins=30)
+        st.plotly_chart(fig3, width='stretch')
+        
+        # Coefficients du modèle (pour les modèles linéaires)
+        if hasattr(model, 'coef_'):
+            st.subheader("📋 Coefficients du Modèle")
+            
+            if regression_type == "Polynomiale":
+                # Pour les modèles polynomiales, obtenir les noms des features
+                feature_names = poly.get_feature_names_out(feature_cols)
+                coefficients = model.coef_
+            else:
+                feature_names = feature_cols
+                coefficients = model.coef_
+            
+            if hasattr(model, 'intercept_'):
+                intercept = model.intercept_
+                coeff_df = pd.DataFrame({
+                    'Feature': ['Intercept'] + list(feature_names),
+                    'Coefficient': [intercept] + list(coefficients)
+                })
+            else:
+                coeff_df = pd.DataFrame({
+                    'Feature': feature_names,
+                    'Coefficient': coefficients
+                })
+            
+            st.dataframe(coeff_df, width='stretch')
+            
+            # Graphique des coefficients
+            fig4 = px.bar(coeff_df, x='Feature', y='Coefficient',
+                         title="Importance des Variables (Coefficients)")
+            st.plotly_chart(fig4, width='stretch')
+        
+        elif regression_type == "Personnalisée":
+            st.subheader("📋 Paramètres Optimaux")
+            param_df = pd.DataFrame(list(model.params.items()), 
+                                  columns=['Paramètre', 'Valeur'])
+            st.dataframe(param_df, width='stretch')
+            
+            st.write("**Fonction optimisée :**")
+            st.code(custom_function)
+        
+        # Importance des features (pour les modèles d'ensemble)
+        elif hasattr(model, 'feature_importances_'):
+            st.subheader("📊 Importance des Variables")
+            
+            importance_df = pd.DataFrame({
+                'Feature': feature_cols,
+                'Importance': model.feature_importances_
+            }).sort_values('Importance', ascending=False)
+            
+            st.dataframe(importance_df, width='stretch')
+            
+            fig5 = px.bar(importance_df, x='Feature', y='Importance',
+                         title="Importance des Variables")
+            st.plotly_chart(fig5, width='stretch')
+        
+        # Téléchargement des résultats
+        st.subheader("💾 Export des Résultats")
+        
+        # Ajouter les prédictions au DataFrame original
+        results_full = df.copy()
+        results_full['Prediction'] = model.predict(X) if hasattr(model, 'predict') else np.nan
+        results_full['Residu'] = results_full[target_col] - results_full['Prediction']
+        
+        csv_data = results_full.to_csv(index=False)
+        st.download_button(
+            label="📥 Télécharger les prédictions (CSV)",
+            data=csv_data,
+            file_name="predictions_regression.csv",
+            mime="text/csv"
+        )
+
+# =============================================================================
 # FONCTIONS POUR LES INFOBULLES ET DICTIONNAIRE DE MÉTRIQUES
 # =============================================================================
 
@@ -1711,54 +2190,176 @@ def create_tooltip(help_text):
 
 def show_metric_info(metric_name):
     """Affiche les informations détaillées sur une métrique spécifique"""
+    
+    # Utiliser r"""...""" pour les formules LaTeX sur plusieurs lignes
     metrics_info = {
         "Pearson": {
             "description": "Mesure la corrélation linéaire entre deux variables continues.",
-            "formula": "r = Σ[(xᵢ - x̄)(yᵢ - ȳ)] / √[Σ(xᵢ - x̄)² Σ(yᵢ - ȳ)²]",
+            "formula": r"""
+                \begin{align*}
+                r &= \frac{\sum_{i=1}^{n}[(x_i - \bar{x})(y_i - \bar{y})]}{\sqrt{\sum_{i=1}^{n}(x_i - \bar{x})^2 \sum_{i=1}^{n}(y_i - \bar{y})^2}} \\
+                \text{où } \bar{x} &\text{ est la moyenne de } x, \bar{y} \text{ la moyenne de } y.
+                \end{align*}
+            """,
             "interpretation": "Valeurs entre -1 et 1. 1: corrélation positive parfaite, -1: corrélation négative parfaite, 0: absence de corrélation linéaire.",
             "usage": "Idéal pour détecter les relations linéaires entre variables normalement distribuées."
         },
         "Brice": {
             "description": "Corrélation basée sur les variations premières (dérivées discrètes) des séries temporelles.",
-            "formula": "Brice = Σ(Δxᵢ * Δyᵢ) / √[Σ(Δxᵢ)² * Σ(Δyᵢ)²] où Δxᵢ = xᵢ - xᵢ₋₁",
+            "formula": r"""
+                \begin{align*}
+                \text{Brice} &= \frac{\sum_{i=2}^{n}(\Delta x_i \cdot \Delta y_i)}{\sqrt{\sum_{i=2}^{n}(\Delta x_i)^2 \cdot \sum_{i=2}^{n}(\Delta y_i)^2}} \\
+                \text{où } \Delta x_i &= x_i - x_{i-1}
+                \end{align*}
+            """,
             "interpretation": "Mesure la similarité dans les tendances à court terme. Valeurs élevées indiquent que les variables évoluent dans la même direction.",
             "usage": "Utile pour l'analyse de séries temporelles et la détection de co-mouvements."
         },
         "Brice1": {
             "description": "Version centrée de la corrélation Brice, utilisant les variations centrées.",
-            "formula": "Brice1 = Σ[(Δxᵢ - μ_Δx)(Δyᵢ - μ_Δy)] / √[Σ(Δxᵢ - μ_Δx)² * Σ(Δyᵢ - μ_Δy)²]",
+            "formula": r"""
+                \begin{align*}
+                \text{Brice1} &= \frac{\sum_{i=2}^{n}[(\Delta x_i - \mu_{\Delta x})(\Delta y_i - \mu_{\Delta y})]}{\sqrt{\sum_{i=2}^{n}(\Delta x_i - \mu_{\Delta x})^2 \cdot \sum_{i=2}^{n}(\Delta y_i - \mu_{\Delta y})^2}} \\
+                \text{où } \mu_{\Delta x} &\text{ est la moyenne des variations de } x, \mu_{\Delta y} \text{ celle de } y.
+                \end{align*}
+            """,
             "interpretation": "Similaire à Brice mais moins sensible aux tendances globales, se concentrant sur les variations relatives.",
             "usage": "Recommandé lorsque les séries présentent des tendances non stationnaires."
         },
         "Silhouette": {
             "description": "Mesure la qualité de la séparation entre les clusters.",
-            "formula": "s(i) = (b(i) - a(i)) / max{a(i), b(i)} où a(i) est la distance moyenne intra-cluster, b(i) la distance moyenne au cluster le plus proche",
+            "formula": r"""
+                \begin{align*}
+                s(i) &= \frac{b(i) - a(i)}{\max\{a(i), b(i)\}} \\
+                \text{où } a(i) &\text{ est la distance moyenne intra-cluster,} \\
+                b(i) &\text{ est la distance moyenne au cluster le plus proche.}
+                \end{align*}
+            """,
             "interpretation": "Valeurs entre -1 et 1. Valeurs proches de 1: clusters bien séparés, proches de 0: clusters se chevauchent, négatives: points mal classés.",
             "usage": "Critère de validation pour le clustering, indépendant du nombre de clusters."
         },
         "Calinski-Harabasz": {
             "description": "Ratio entre la dispersion inter-cluster et intra-cluster.",
-            "formula": "CH = [B/(k-1)] / [W/(n-k)] où B est la somme des carrés inter-clusters, W la somme des carrés intra-clusters",
+            "formula": r"""
+                \begin{align*}
+                CH &= \frac{B/(k-1)}{W/(n-k)} \\
+                \text{où } B &\text{ est la somme des carrés inter-clusters,} \\
+                W &\text{ est la somme des carrés intra-clusters,} \\
+                n &\text{ le nombre de points, } k \text{ le nombre de clusters.}
+                \end{align*}
+            """,
             "interpretation": "Valeurs plus élevées indiquent une meilleure séparation entre clusters. Pas de borne supérieure fixe.",
             "usage": "Utile pour comparer différentes configurations de clustering sur le même dataset."
         },
         "Davies-Bouldin": {
             "description": "Mesure la similarité moyenne entre chaque cluster et son cluster le plus similaire.",
-            "formula": "DB = (1/k) Σ max{(sᵢ + sⱼ)/d(cᵢ, cⱼ)} pour i ≠ j, où sᵢ est la dispersion moyenne du cluster i",
+            "formula": r"""
+                \begin{align*}
+                DB &= \frac{1}{k} \sum_{i=1}^{k} \max_{j \neq i} \left\{ \frac{s_i + s_j}{d(c_i, c_j)} \right\} \\
+                \text{où } s_i &\text{ est la dispersion moyenne du cluster } i.
+                \end{align*}
+            """,
             "interpretation": "Valeurs plus faibles indiquent une meilleure séparation. Minimum théorique de 0.",
             "usage": "Bon pour les clusters de formes et densités variées."
         },
         "ARI": {
             "description": "Adjusted Rand Index - Mesure la similarité entre deux partitions, corrigée du hasard.",
-            "formula": "ARI = (Index - Expected_Index) / (Max_Index - Expected_Index)",
+            "formula": r"""
+                \begin{align*}
+                ARI &= \frac{\text{Index} - \text{Expected\_Index}}{\text{Max\_Index} - \text{Expected\_Index}}
+                \end{align*}
+            """,
             "interpretation": "Valeurs entre -1 et 1. 1: accord parfait, 0: accord aléatoire, négatif: accord pire que le hasard.",
             "usage": "Validation externe du clustering lorsque la vérité terrain est disponible."
         },
         "NMI": {
             "description": "Normalized Mutual Information - Mesure l'information mutuelle normalisée entre deux partitions.",
-            "formula": "NMI = I(X;Y) / √[H(X)H(Y)] où I est l'information mutuelle, H l'entropie",
+            "formula": r"""
+                \begin{align*}
+                NMI &= \frac{I(X;Y)}{\sqrt{H(X)H(Y)}} \\
+                \text{où } I(X;Y) &\text{ est l'Information Mutuelle, } \\
+                H(X) \text{ et } H(Y) &\text{ sont les Entropies des partitions.}
+                \end{align*}
+            """,
             "interpretation": "Valeurs entre 0 et 1. 1: accord parfait, 0: indépendance statistique.",
             "usage": "Comparaison de partitions avec différents nombres de clusters."
+        },
+        "Entropie (Shannon)": {
+            "description": "Mesure l'incertitude ou la quantité d'information contenue dans une partition.",
+            "formula": r"""
+                \begin{align*}
+                H(X) &= -\sum_{i=1}^{|C_X|} p(x_i) \log_2(p(x_i)) \\
+                \text{où } p(x_i) &= \frac{|C_i|}{|N|} \\
+                |C_X| &\text{ est le nombre de clusters dans la partition } X.
+                \end{align*}
+            """,
+            "interpretation": "Une valeur plus élevée indique une partition plus uniformément distribuée (plus incertaine).",
+            "usage": "Bloc de construction fondamental pour toutes les mesures basées sur l'information."
+        },
+        "Information Mutuelle": {
+            "description": "Mesure la quantité d'information partagée entre deux partitions (dépendance mutuelle).",
+            "formula": r"""
+                \begin{align*}
+                I(X;Y) &= \sum_{i=1}^{|C_X|} \sum_{j=1}^{|C_Y|} p(x_i, y_j) \log_2 \left( \frac{p(x_i, y_j)}{p(x_i) p(y_j)} \right) \\
+                \text{où } p(x_i, y_j) &\text{ est la probabilité conjointe, } \\
+                p(x_i) &\text{ et } p(y_j) \text{ sont les probabilités marginales.}
+                \end{align*}
+            """,
+            "interpretation": "Plus la valeur est élevée, plus l'accord entre les deux partitions est fort (0 = indépendance totale).",
+            "usage": "Utilisé comme numérateur pour le NMI (Normalized Mutual Information)."
+        },
+        "Variation de l'Information": {
+            "description": "Mesure la distance entre deux partitions. C'est une alternative au NMI.",
+            "formula": r"""
+                \begin{align*}
+                VI(X, Y) &= H(X|Y) + H(Y|X) \\
+                &= H(X) + H(Y) - 2 I(X;Y) \\
+                \text{où } H(X|Y) &\text{ est l'entropie conditionnelle de } X \text{ sachant } Y.
+                \end{align*}
+            """,
+            "interpretation": "Une valeur de 0 indique un accord parfait (partitions identiques). Plus la valeur est faible, meilleur est le clustering.",
+            "usage": "Validation externe du clustering lorsque la vérité terrain est disponible."
+        },
+        "R² (R-carré)": {
+            "description": "Coefficient de détermination - Mesure la proportion de variance expliquée par le modèle.",
+            "formula": r"""
+                \begin{align*}
+                R^2 &= 1 - \frac{\sum_{i=1}^{n}(y_i - \hat{y}_i)^2}{\sum_{i=1}^{n}(y_i - \bar{y})^2} \\
+                \text{où } \hat{y}_i &\text{ est la prédiction, } \bar{y} \text{ la moyenne des observations.}
+                \end{align*}
+            """,
+            "interpretation": "Valeurs entre 0 et 1. 1: modèle parfait, 0: modèle n'explique aucune variance.",
+            "usage": "Métrique principale pour évaluer les modèles de régression."
+        },
+        "MSE": {
+            "description": "Mean Squared Error - Erreur quadratique moyenne.",
+            "formula": r"""
+                \begin{align*}
+                MSE &= \frac{1}{n}\sum_{i=1}^{n}(y_i - \hat{y}_i)^2
+                \end{align*}
+            """,
+            "interpretation": "Plus la valeur est faible, meilleur est le modèle. Sensible aux valeurs extrêmes.",
+            "usage": "Métrique courante pour la régression, pénalise fortement les grandes erreurs."
+        },
+        "MAE": {
+            "description": "Mean Absolute Error - Erreur absolue moyenne.",
+            "formula": r"""
+                \begin{align*}
+                MAE &= \frac{1}{n}\sum_{i=1}^{n}|y_i - \hat{y}_i|
+                \end{align*}
+            """,
+            "interpretation": "Plus la valeur est faible, meilleur est le modèle. Moins sensible aux outliers que le MSE.",
+            "usage": "Bonne alternative au MSE quand les données contiennent des valeurs aberrantes."
+        },
+        "RMSE": {
+            "description": "Root Mean Squared Error - Racine carrée de l'erreur quadratique moyenne.",
+            "formula": r"""
+                \begin{align*}
+                RMSE &= \sqrt{\frac{1}{n}\sum_{i=1}^{n}(y_i - \hat{y}_i)^2}
+                \end{align*}
+            """,
+            "interpretation": "Dans la même unité que la variable cible. Plus la valeur est faible, meilleur est le modèle.",
+            "usage": "Facilite l'interprétation en conservant l'unité de mesure originale."
         }
     }
     
@@ -1766,7 +2367,11 @@ def show_metric_info(metric_name):
         info = metrics_info[metric_name]
         st.markdown(f"### {metric_name}")
         st.markdown(f"**Description:** {info['description']}")
-        st.markdown(f"**Formule:** `{info['formula']}`")
+        
+        # Affichage avec st.latex()
+        st.markdown("**Formule:**")
+        st.latex(info['formula']) 
+        
         st.markdown(f"**Interprétation:** {info['interpretation']}")
         st.markdown(f"**Usage recommandé:** {info['usage']}")
     else:
@@ -1777,44 +2382,67 @@ def create_metrics_dictionary():
     st.header("📚 Dictionnaire des Métriques")
     
     # Métriques de corrélation
-    with st.expander("📈 Métriques de Corrélation", expanded=True):
+    with st.expander("📈 Métriques de Corrélation", width="stretch", expanded=True):
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("Pearson", use_container_width=True):
+            if st.button("Pearson", width="stretch"):
                 show_metric_info("Pearson")
         with col2:
-            if st.button("Brice", use_container_width=True):
+            if st.button("Brice", width="stretch"):
                 show_metric_info("Brice")
         with col3:
-            if st.button("Brice1", use_container_width=True):
+            if st.button("Brice1", width="stretch"):
                 show_metric_info("Brice1")
     
     # Métriques de clustering
-    with st.expander("🔍 Métriques de Clustering", expanded=True):
+    with st.expander("🔍 Métriques de Clustering", width="stretch", expanded=True):
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            if st.button("Silhouette", use_container_width=True):
+            if st.button("Silhouette", width="stretch"):
                 show_metric_info("Silhouette")
         with col2:
-            if st.button("Calinski-Harabasz", use_container_width=True):
+            if st.button("Calinski-Harabasz", width="stretch"):
                 show_metric_info("Calinski-Harabasz")
         with col3:
-            if st.button("Davies-Bouldin", use_container_width=True):
+            if st.button("Davies-Bouldin", width="stretch"):
                 show_metric_info("Davies-Bouldin")
         with col4:
-            if st.button("ARI", use_container_width=True):
+            if st.button("ARI", width="stretch"):
                 show_metric_info("ARI")
         
         col5, col6, col7, col8 = st.columns(4)
         with col5:
-            if st.button("NMI", use_container_width=True):
+            if st.button("NMI", width="stretch"):
                 show_metric_info("NMI")
+        with col6:
+            if st.button("Entropie (Shannon)", width="stretch"):
+                show_metric_info("Entropie (Shannon)")
+        with col7:
+            if st.button("Information Mutuelle", width="stretch"):
+                show_metric_info("Information Mutuelle")
+        with col8:
+            if st.button("Variation de l'Information", width="stretch"):
+                show_metric_info("Variation de l'Information")
+        
     
-    # Métriques statistiques
-    with st.expander("📊 Métriques Statistiques", expanded=False):
-        st.info("Moyenne, Écart-type, Variance, Médiane, etc. - Métriques descriptives standard")
+    # Métriques de régression
+    with st.expander("📊 Métriques de Régression", width="stretch", expanded=True):
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if st.button("R² (R-carré)", width="stretch"):
+                show_metric_info("R² (R-carré)")
+        with col2:
+            if st.button("MSE", width="stretch"):
+                show_metric_info("MSE")
+        with col3:
+            if st.button("MAE", width="stretch"):
+                show_metric_info("MAE")
+        with col4:
+            if st.button("RMSE", width="stretch"):
+                show_metric_info("RMSE")
     
     # Recherche de métrique
     st.subheader("🔍 Recherche de Métrique")
@@ -1860,6 +2488,8 @@ def initialize_session_state():
         'cluster_comparison_results': None,
         'separator': ',',
         'logo_path': "Images/Logo/Logo_BKZ_1_5.png",
+        'data_source': 'Fichiers locaux',  # CORRECTION: Utiliser la même valeur que dans le radio
+        'sklearn_dataset': None,
     }
     
     for key, value in defaults.items():
@@ -1960,51 +2590,87 @@ def create_sidebar():
         st.markdown("---")
         st.header("📁 Chargement des Données")
         
-        # Sélecteur de séparateur
-        separator_options = [ "automatique", "espace", ", (virgule)", "; (point-virgule)", "\t (tabulation)", "| (pipe)" ]
-        selected_separator = st.selectbox("Séparateur de colonnes", separator_options)
-        create_tooltip("Séparateur utilisé dans les fichiers CSV/TXT. La détection automatique analyse le fichier pour trouver le bon séparateur.")
+        # CORRECTION: Simplifier la sélection de la source des données
+        data_source = st.radio("Source des données", 
+                              ["Fichiers locaux", "Datasets sklearn"],
+                              key="data_source_radio",
+                              horizontal=True)
         
-        separator_map = {
-            ", (virgule)": ",",
-            "; (point-virgule)": ";", 
-            "\t (tabulation)": "\t",
-            "| (pipe)": "|",
-            "espace": " ",
-            "automatique": None
-        }
-        st.session_state.separator = separator_map[selected_separator]
+        # Mettre à jour l'état de session
+        st.session_state.data_source = data_source
         
-        # Upload files
-        uploaded_files = st.file_uploader("Sélectionnez les fichiers à analyser", 
-                                        type=['csv', 'txt', 'xlsx', 'xls'], accept_multiple_files=True)
-        create_tooltip("Chargez un ou plusieurs fichiers de données. Formats supportés: CSV, TXT, Excel (XLSX, XLS)")
+        if st.session_state.data_source == "Fichiers locaux":
+            # Sélecteur de séparateur
+            separator_options = [ "automatique", "espace", ", (virgule)", "; (point-virgule)", "\t (tabulation)", "| (pipe)" ]
+            selected_separator = st.selectbox("Séparateur de colonnes", separator_options)
+            create_tooltip("Séparateur utilisé dans les fichiers CSV/TXT. La détection automatique analyse le fichier pour trouver le bon séparateur.")
+            
+            separator_map = {
+                ", (virgule)": ",",
+                "; (point-virgule)": ";", 
+                "\t (tabulation)": "\t",
+                "| (pipe)": "|",
+                "espace": " ",
+                "automatique": None
+            }
+            st.session_state.separator = separator_map[selected_separator]
+            
+            # Upload files
+            uploaded_files = st.file_uploader("Sélectionnez les fichiers à analyser", 
+                                            type=['csv', 'txt', 'xlsx', 'xls'], accept_multiple_files=True)
+            create_tooltip("Chargez un ou plusieurs fichiers de données. Formats supportés: CSV, TXT, Excel (XLSX, XLS)")
+            
+            for uploaded_file in uploaded_files:
+                if uploaded_file.name not in st.session_state.uploaded_files:
+                    df = load_data(uploaded_file, st.session_state.separator)
+                    if df is not None:
+                        st.session_state.uploaded_files[uploaded_file.name] = df
+                        st.session_state.original_data[uploaded_file.name] = df.copy()
+                        st.session_state.filtered_data[uploaded_file.name] = df.copy()
+                        st.session_state.data_loaded = True
+                        st.success(f"✅ {uploaded_file.name} chargé ({len(df)} lignes, {len(df.columns)} colonnes)")
         
-        for uploaded_file in uploaded_files:
-            if uploaded_file.name not in st.session_state.uploaded_files:
-                df = load_data(uploaded_file, st.session_state.separator)
-                if df is not None:
-                    st.session_state.uploaded_files[uploaded_file.name] = df
-                    st.session_state.original_data[uploaded_file.name] = df.copy()
-                    st.session_state.filtered_data[uploaded_file.name] = df.copy()
-                    st.session_state.data_loaded = True
-                    st.success(f"✅ {uploaded_file.name} chargé ({len(df)} lignes, {len(df.columns)} colonnes)")
+        else:  # Datasets sklearn
+            dataset_options = ['Iris', 'Diabète', 'Digits', 'Linnerud', 'Wine', 'Breast Cancer', 'California Housing']
+            selected_dataset = st.selectbox("Sélectionnez un dataset", dataset_options)
+            
+            # CORRECTION: Utiliser un formulaire pour éviter le rechargement immédiat
+            with st.form(key="load_sklearn_dataset_form"):
+                if st.form_submit_button("📥 Charger le dataset", type="primary"):
+                    with st.spinner(f"Chargement du dataset {selected_dataset}..."):
+                        df = load_sklearn_dataset(selected_dataset)
+                        if df is not None:
+                            dataset_name = f"sklearn_{selected_dataset.lower().replace(' ', '_')}"
+                            st.session_state.uploaded_files[dataset_name] = df
+                            st.session_state.original_data[dataset_name] = df.copy()
+                            st.session_state.filtered_data[dataset_name] = df.copy()
+                            st.session_state.data_loaded = True
+                            st.session_state.sklearn_dataset = selected_dataset
+                            st.session_state.sampling_file = dataset_name
+                            st.success(f"✅ Dataset {selected_dataset} chargé ({len(df)} lignes, {len(df.columns)} colonnes)")
+                            # Forcer le rechargement pour afficher les données
+                            st.rerun()
         
+        # CORRECTION: Afficher les fichiers chargés
         if st.session_state.uploaded_files:
-            all_columns = set()
-            for df in st.session_state.uploaded_files.values():
-                all_columns.update(df.columns.tolist())
-            st.session_state.all_columns = sorted(list(all_columns))
+            st.subheader("📂 Fichiers chargés")
+            for file_name in st.session_state.uploaded_files.keys():
+                df = st.session_state.uploaded_files[file_name]
+                st.write(f"• {file_name} ({len(df)} lignes, {len(df.columns)} colonnes)")
         
+        # CORRECTION: Sélection du fichier principal après chargement
         if st.session_state.uploaded_files:
             file_names = list(st.session_state.uploaded_files.keys())
             st.markdown("---")
-            sampling_file = st.selectbox("📋 Fichier d'échantillonnage", file_names)
-            create_tooltip("Sélectionnez le fichier principal contenant les données d'échantillonnage à analyser")
+            sampling_file = st.selectbox("📋 Fichier principal", file_names, 
+                                       key="sampling_file_selector")
             
             if sampling_file:
                 st.session_state.sampling_file = sampling_file
                 df = st.session_state.uploaded_files[sampling_file]
+                
+                # Afficher les informations du fichier sélectionné
+                st.info(f"**{sampling_file}** sélectionné: {len(df)} lignes, {len(df.columns)} colonnes")
                 
                 id_options = df.columns.tolist()
                 st.session_state.id_column = st.selectbox("🔑 Colonne ID", id_options, index=0)
@@ -2577,6 +3243,12 @@ def create_advanced_multivariate_analysis(df):
             n_clusters = st.slider("Nombre de clusters PCA", 2, 30, 3)
             create_tooltip("Nombre de clusters à identifier dans l'espace des composantes principales")
     
+    # CORRECTION: Définir pca_method avec une valeur par défaut
+    pca_method = st.radio("Méthode de réduction PCA", 
+                         ["Récursive (recommandée)", "Directe"], 
+                         horizontal=True,
+                         help="Méthode récursive: réduit progressivement les dimensions. Méthode directe: réduit en une seule étape.")
+    
     # Métrique de correspondance
     correspondence_metric = st.selectbox(
         "Métrique de correspondance",
@@ -2604,8 +3276,9 @@ def create_advanced_multivariate_analysis(df):
             )
             
             # Analyse multivariée avec PCA
+            pca_method_param = "récursive" if pca_method == "Récursive (recommandée)" else "directe"
             pca_df, variance_ratio, pca_clusters, cluster_metrics = advanced_multivariate_analysis(
-                df, selected_cols, color_col, clustering_method, n_clusters
+                df, selected_cols, color_col, clustering_method, n_clusters, pca_method_param
             )
             
             if pca_df is None:
@@ -2709,14 +3382,56 @@ def create_main_interface():
     Chargez vos fichiers, configurez les visualisations et explorez vos données.
     """)
     
+    # CORRECTION: Meilleur affichage de l'état des données
     if not st.session_state.uploaded_files:
         st.info("💡 Veuillez charger des fichiers de données dans la sidebar pour commencer.")
+        
+        # Aide pour le chargement des datasets sklearn
+        if st.session_state.data_source == "Datasets sklearn":
+            st.info("""
+            **Pour charger un dataset sklearn :**
+            1. Sélectionnez "Datasets sklearn" dans la sidebar
+            2. Choisissez un dataset dans la liste
+            3. Cliquez sur "📥 Charger le dataset"
+            
+            **Datasets disponibles :**
+            - **Iris** : Données de fleurs iris (classification)
+            - **Diabète** : Données médicales sur le diabète (régression)
+            - **Digits** : Images de chiffres manuscrits (classification)
+            - **Linnerud** : Données d'exercice physique (régression multivariée)
+            - **Wine** : Données chimiques de vins (classification)
+            - **Breast Cancer** : Données sur le cancer du sein (classification)
+            - **California Housing** : Données immobilières (régression)
+            """)
+        else:
+            st.info("""
+            **Pour charger vos propres fichiers :**
+            1. Sélectionnez "Fichiers locaux" dans la sidebar
+            2. Choisissez le type de séparateur si nécessaire
+            3. Téléchargez vos fichiers CSV, TXT, Excel
+            """)
         return
     
+    # CORRECTION: Vérifier que le fichier principal est défini
+    if not st.session_state.sampling_file:
+        st.warning("⚠️ Veuillez sélectionner un fichier principal dans la sidebar")
+        return
+        
     if st.session_state.sampling_file and st.session_state.sampling_file in st.session_state.filtered_data:
         df = st.session_state.filtered_data[st.session_state.sampling_file]
     else:
+        # Fallback: utiliser le premier fichier disponible
         df = st.session_state.uploaded_files[list(st.session_state.uploaded_files.keys())[0]]
+        st.session_state.sampling_file = list(st.session_state.uploaded_files.keys())[0]
+    
+    # CORRECTION: Afficher des informations plus claires sur les données
+    st.success(f"✅ **Données chargées :** {st.session_state.sampling_file}")
+    
+    # Mettre à jour toutes les colonnes disponibles
+    all_columns = set()
+    for df_temp in st.session_state.uploaded_files.values():
+        all_columns.update(df_temp.columns.tolist())
+    st.session_state.all_columns = sorted(list(all_columns))
     
     # Calcul des métriques avancées
     initial_rows = len(st.session_state.original_data.get(st.session_state.sampling_file, df))
@@ -2730,27 +3445,42 @@ def create_main_interface():
     col1, col2, col3 = st.columns(3)
     col4, col5, col6 = st.columns(3)
     with col1:
-        st.metric("Fichiers chargés", len(st.session_state.uploaded_files), border=True, chart_type="bar")
+        st.metric("Fichiers chargés", len(st.session_state.uploaded_files), border=True)
     with col2:
-        st.metric("Enregistrements totaux", initial_rows, border=True, chart_type="bar")
+        st.metric("Enregistrements totaux", initial_rows, border=True)
     with col3:
-        st.metric("Colonnes disponibles", len(st.session_state.all_columns), border=True, chart_type="bar")
+        st.metric("Colonnes disponibles", len(st.session_state.all_columns), border=True)
     with col4:
-        st.metric("Filtres actifs", len(st.session_state.filters) + len(st.session_state.advanced_filters), border=True, chart_type="bar")
+        st.metric("Filtres actifs", len(st.session_state.filters) + len(st.session_state.advanced_filters), border=True)
     with col5:
-        st.metric("Lignes supprimées", f"{removed_rows} ({removed_percentage:.1f}%)", border=True, chart_type="bar")
+        st.metric("Lignes supprimées", f"{removed_rows} ({removed_percentage:.1f}%)", border=True)
     with col6:
-        st.metric("Lignes à valeurs manquantes", f"{high_missing_rows} ({missing_percentage:.1f}%)", border=True, chart_type="bar")
+        st.metric("Lignes à valeurs manquantes", f"{high_missing_rows} ({missing_percentage:.1f}%)", border=True)
     
     # Affichage des données filtrées
     with st.expander("👀 Aperçu des Données Filtrées", expanded=False):
         st.dataframe(df.head(10), width='stretch')
         st.write(f"**{len(df)}** enregistrements après filtrage")
+        
+        # Afficher les types de données
+        st.subheader("📋 Types de Données")
+        type_info = []
+        for col in df.columns:
+            dtype = df[col].dtype
+            unique = df[col].nunique()
+            missing = df[col].isnull().sum()
+            type_info.append({
+                'Colonne': col,
+                'Type': dtype,
+                'Valeurs uniques': unique,
+                'Valeurs manquantes': missing
+            })
+        st.dataframe(pd.DataFrame(type_info), width='stretch')
     
-    # Onglets d'analyse (AVEC LE NOUVEL ONGLET MÉTRIQUES)
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    # Onglets d'analyse
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
         "📈 Distribution", "🔗 Corrélations", "📊 Catégoriel", 
-        "📋 Échantillonnage", "🔥 Heatmaps", "🔍 Clustering", "⚡ Avancé", "📚 Métriques"
+        "📋 Échantillonnage", "🔥 Heatmaps", "🔍 Clustering", "📈 Régression", "⚡ Avancé", "📚 Métriques"
     ])
     
     # Onglet Distribution
@@ -2773,7 +3503,7 @@ def create_main_interface():
             y_col_option = None
             
             if plot_type == "histogram":
-                nbins = st.slider("Nombre d'intervalles", 5, 100, 30, key="dist_nbins")
+                nbins = st.slider("Nombre d'intervalles", 5, 500, 30, key="dist_nbins")
                 create_tooltip("Nombre de barres dans l'histogramme")
                 density = st.checkbox("Afficher la densité", key="dist_density")
                 create_tooltip("Superpose une courbe de densité à l'histogramme")
@@ -3147,8 +3877,12 @@ def create_main_interface():
     with tab6:
         create_advanced_clustering_interface(df)
     
-    # Onglet Avancé (avec optimisation d'hyperparamètres et analyse multivariée)
+    # NOUVEL ONGLET: RÉGRESSION
     with tab7:
+        create_regression_interface(df)
+    
+    # Onglet Avancé (avec optimisation d'hyperparamètres et analyse multivariée)
+    with tab8:
         st.header("⚡ Outils d'Analyse Avancée")
         
         subtab1, subtab2, subtab3, subtab4, subtab5, subtab6 = st.tabs([
@@ -3323,8 +4057,8 @@ def create_main_interface():
                         mime="application/json"
                     )
     
-    # NOUVEL ONGLET: DICTIONNAIRE DES MÉTRIQUES
-    with tab8:
+    # ONGLET: DICTIONNAIRE DES MÉTRIQUES
+    with tab9:
         create_metrics_dictionary()
 
 def main():
